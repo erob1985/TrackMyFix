@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
+import { formatUsPhone, isValidUsPhone } from "@/lib/phone";
 
 interface Template {
   id: string;
@@ -35,6 +36,7 @@ export default function ManagerCreateJobPage() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(true);
+  const [showRosterChecking, setShowRosterChecking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -107,6 +109,19 @@ export default function ManagerCreateJobPage() {
   }, [ownerId]);
 
   useEffect(() => {
+    if (!loadingTemplates) {
+      setShowRosterChecking(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setShowRosterChecking(true);
+    }, 2000);
+
+    return () => window.clearTimeout(timer);
+  }, [loadingTemplates]);
+
+  useEffect(() => {
     if (!selectedTemplateId) {
       return;
     }
@@ -176,6 +191,11 @@ export default function ManagerCreateJobPage() {
       return;
     }
 
+    if (customerPhone.trim().length > 0 && !isValidUsPhone(customerPhone)) {
+      setError("Enter a valid 10-digit customer phone number or leave it blank.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
     setSuccess(null);
@@ -235,11 +255,35 @@ export default function ManagerCreateJobPage() {
       <p className="page-subtitle">Every new job generates a unique customer link and technician link.</p>
 
       <form className="form-grid" onSubmit={handleCreateJob} style={{ marginTop: "0.7rem" }}>
-        {technicians.length === 0 ? (
-          <p className="error">
-            Add at least one technician in Account before creating jobs.
-          </p>
-        ) : null}
+        <div style={{ minHeight: "1.4rem" }}>
+          {loadingTemplates && showRosterChecking ? (
+            <p className="page-subtitle">Checking technician roster...</p>
+          ) : !loadingTemplates && technicians.length === 0 ? (
+            <p className="error">Add at least one technician in Account before creating jobs.</p>
+          ) : null}
+        </div>
+
+        <div className="grid-two">
+          <label>
+            Customer Name
+            <input
+              className="field"
+              value={customerName}
+              onChange={(event) => setCustomerName(event.target.value)}
+              placeholder="John Smith"
+            />
+          </label>
+
+          <label>
+            Customer Phone (optional)
+            <input
+              className="field"
+              value={customerPhone}
+              onChange={(event) => setCustomerPhone(formatUsPhone(event.target.value))}
+              placeholder="(555) 555-5555"
+            />
+          </label>
+        </div>
 
         <div className="grid-two">
           <label>
@@ -268,9 +312,11 @@ export default function ManagerCreateJobPage() {
           <select
             value={selectedTechnicianId}
             onChange={(event) => setSelectedTechnicianId(event.target.value)}
-            disabled={technicians.length === 0}
+            disabled={loadingTemplates || technicians.length === 0}
           >
-            {technicians.length === 0 ? (
+            {loadingTemplates ? (
+              <option value="">Loading technicians...</option>
+            ) : technicians.length === 0 ? (
               <option value="">No technicians available</option>
             ) : null}
             {technicians.map((technician) => (
@@ -280,28 +326,6 @@ export default function ManagerCreateJobPage() {
             ))}
           </select>
         </label>
-
-        <div className="grid-two">
-          <label>
-            Customer Name
-            <input
-              className="field"
-              value={customerName}
-              onChange={(event) => setCustomerName(event.target.value)}
-              placeholder="John Smith"
-            />
-          </label>
-
-          <label>
-            Customer Phone (optional)
-            <input
-              className="field"
-              value={customerPhone}
-              onChange={(event) => setCustomerPhone(event.target.value)}
-              placeholder="555-555-5555"
-            />
-          </label>
-        </div>
 
         <label>
           Load Job Tasklist Template (optional)

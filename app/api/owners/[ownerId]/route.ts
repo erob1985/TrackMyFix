@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorResponse } from "@/lib/api";
+import { authorizeOwnerAccess } from "@/lib/auth";
 import { deleteOwner, getOwner, updateOwner } from "@/lib/store";
 
 export async function GET(
@@ -7,6 +8,11 @@ export async function GET(
   context: { params: Promise<{ ownerId: string }> },
 ): Promise<NextResponse> {
   const { ownerId } = await context.params;
+  const manager = await authorizeOwnerAccess(ownerId);
+  if (manager instanceof NextResponse) {
+    return manager;
+  }
+
   const owner = await getOwner(ownerId);
 
   if (!owner) {
@@ -20,14 +26,28 @@ export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ ownerId: string }> },
 ): Promise<NextResponse> {
+  const { ownerId } = await context.params;
+  const manager = await authorizeOwnerAccess(ownerId);
+  if (manager instanceof NextResponse) {
+    return manager;
+  }
+
   const body = await request.json().catch(() => null);
   if (!body) {
     return errorResponse("Invalid request body.");
   }
 
-  const { ownerId } = await context.params;
-
   try {
+    const submittedEmail = String(body.email ?? "")
+      .trim()
+      .toLowerCase();
+    if (submittedEmail && submittedEmail !== manager.email) {
+      return errorResponse(
+        "Manager email must match your authenticated account email.",
+        403,
+      );
+    }
+
     const technicians = Array.isArray(body.technicians)
       ? body.technicians.map((candidate) => ({
           id: String(candidate?.id ?? ""),
@@ -39,7 +59,7 @@ export async function PATCH(
 
     const owner = await updateOwner(ownerId, {
       name: String(body.name ?? ""),
-      email: String(body.email ?? ""),
+      email: manager.email,
       businessName: String(body.businessName ?? ""),
       businessPhone: String(body.businessPhone ?? ""),
       technicians,
@@ -61,6 +81,10 @@ export async function DELETE(
   context: { params: Promise<{ ownerId: string }> },
 ): Promise<NextResponse> {
   const { ownerId } = await context.params;
+  const manager = await authorizeOwnerAccess(ownerId);
+  if (manager instanceof NextResponse) {
+    return manager;
+  }
 
   try {
     const deletedOwner = await deleteOwner(ownerId);

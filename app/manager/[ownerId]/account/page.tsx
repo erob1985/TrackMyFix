@@ -1,7 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { formatUsPhone, isValidUsPhone } from "@/lib/phone";
 
 interface Owner {
   id: string;
@@ -28,7 +29,9 @@ function createLocalId(): string {
 export default function ManagerAccountPage() {
   const params = useParams<{ ownerId: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const ownerId = params.ownerId;
+  const onboarding = searchParams.get("onboarding") === "1";
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -42,8 +45,8 @@ export default function ManagerAccountPage() {
   const [businessPhone, setBusinessPhone] = useState("");
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [techNameDraft, setTechNameDraft] = useState("");
-  const [profileExpanded, setProfileExpanded] = useState(true);
-  const [rosterExpanded, setRosterExpanded] = useState(false);
+  const [profileExpanded, setProfileExpanded] = useState(!onboarding);
+  const [rosterExpanded, setRosterExpanded] = useState(onboarding);
   const [dangerExpanded, setDangerExpanded] = useState(false);
 
   const canSave = useMemo(() => {
@@ -52,6 +55,7 @@ export default function ManagerAccountPage() {
       email.trim().length > 0 &&
       businessName.trim().length > 0 &&
       businessPhone.trim().length > 0 &&
+      isValidUsPhone(businessPhone) &&
       !saving &&
       !deleting
     );
@@ -289,9 +293,13 @@ export default function ManagerAccountPage() {
                   <input
                     className="field"
                     value={businessPhone}
-                    onChange={(event) => setBusinessPhone(event.target.value)}
+                    onChange={(event) => setBusinessPhone(formatUsPhone(event.target.value))}
+                    placeholder="(555) 555-5555"
                   />
                 </label>
+                {businessPhone && !isValidUsPhone(businessPhone) ? (
+                  <p className="error">Enter a valid 10-digit phone number.</p>
+                ) : null}
               </div>
             ) : null}
           </section>
@@ -311,7 +319,10 @@ export default function ManagerAccountPage() {
 
             {rosterExpanded ? (
               <div className="manager-collapsible-body">
-                <p className="page-subtitle">
+                <p
+                  className="page-subtitle"
+                  style={technicians.length === 0 ? { color: "#6ee7b7" } : undefined}
+                >
                   Adding technicians here will enable you to assign resources when creating new jobs.
                 </p>
 

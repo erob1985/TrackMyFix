@@ -1,5 +1,6 @@
 "use client";
 
+import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -36,9 +37,9 @@ export default function ManagerOwnerLayout({ children }: ManagerLayoutProps) {
   const navItems = useMemo(
     () => [
       { href: `/manager/${ownerId}/account`, label: "Account" },
+      { href: `/manager/${ownerId}/templates`, label: "Templates" },
       { href: `/manager/${ownerId}/jobs/create`, label: "Create Job" },
       { href: `/manager/${ownerId}/jobs`, label: "Active Jobs" },
-      { href: `/manager/${ownerId}/templates`, label: "Templates" },
     ],
     [ownerId],
   );
@@ -111,11 +112,18 @@ export default function ManagerOwnerLayout({ children }: ManagerLayoutProps) {
   return (
     <main className="app-shell">
       <section className="card">
-        <p className="kicker">Manager Dashboard</p>
-        <h1 className="page-title">{owner.businessName}</h1>
-        <p className="page-subtitle">
-          {owner.name} · {owner.businessPhone}
-        </p>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: "0.8rem" }}>
+          <div>
+            <p className="kicker">Manager Dashboard</p>
+            <h1 className="page-title">{owner.businessName}</h1>
+            <p className="page-subtitle">
+              {owner.name} · {owner.businessPhone}
+            </p>
+          </div>
+          <div style={{ display: "flex", alignItems: "flex-start" }}>
+            <UserButton afterSignOutUrl="/" />
+          </div>
+        </div>
       </section>
 
       <section className="card manager-nav-wrap">

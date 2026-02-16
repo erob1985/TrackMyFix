@@ -1,33 +1,19 @@
-import { NextRequest } from "next/server";
-import { getJobUpdateSequence } from "@/lib/job-events";
-import { getJobById, toJobSession } from "@/lib/store";
+import { NextRequest, NextResponse } from "next/server";
+import { authorizeOwnerAccess } from "@/lib/auth";
+import { getOwnerUpdateSequence } from "@/lib/job-events";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  request: NextRequest,
-  context: { params: Promise<{ jobId: string }> },
+  _request: NextRequest,
+  context: { params: Promise<{ ownerId: string }> },
 ): Promise<Response> {
-  const { jobId } = await context.params;
-  const role = request.nextUrl.searchParams.get("role");
-  const token = request.nextUrl.searchParams.get("token");
+  const { ownerId } = await context.params;
 
-  if ((role !== "customer" && role !== "technician") || !token) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-
-  const job = await getJobById(jobId);
-  if (!job) {
-    return new Response("Not found", { status: 404 });
-  }
-
-  const isAuthorized =
-    (role === "customer" && job.customerToken === token) ||
-    (role === "technician" && job.technicianToken === token);
-
-  if (!isAuthorized) {
-    return new Response("Unauthorized", { status: 401 });
+  const manager = await authorizeOwnerAccess(ownerId);
+  if (manager instanceof NextResponse) {
+    return manager;
   }
 
   const encoder = new TextEncoder();
@@ -35,7 +21,7 @@ export async function GET(
   let poller: NodeJS.Timeout | undefined;
   let polling = false;
   let closed = false;
-  let lastSequence = await getJobUpdateSequence(jobId);
+  let lastSequence = await getOwnerUpdateSequence(ownerId);
 
   const stream = new ReadableStream({
     start(controller) {
@@ -46,7 +32,7 @@ export async function GET(
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
       };
 
-      send({ type: "connected", job: toJobSession(job) });
+      send({ type: "connected", ownerId });
 
       poller = setInterval(async () => {
         if (closed || polling) {
@@ -55,13 +41,10 @@ export async function GET(
 
         polling = true;
         try {
-          const currentSequence = await getJobUpdateSequence(jobId);
+          const currentSequence = await getOwnerUpdateSequence(ownerId);
           if (currentSequence > lastSequence) {
             lastSequence = currentSequence;
-            const updatedJob = await getJobById(jobId);
-            if (updatedJob) {
-              send({ type: "job.updated", job: toJobSession(updatedJob) });
-            }
+            send({ type: "owner.updated", ownerId });
           }
         } finally {
           polling = false;
@@ -94,3 +77,4 @@ export async function GET(
     },
   });
 }
+

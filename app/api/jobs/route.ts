@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createJob, listJobs, toJobSession } from "@/lib/store";
 import { errorResponse } from "@/lib/api";
+import { authorizeOwnerAccess } from "@/lib/auth";
+import { emitOwnerUpdated } from "@/lib/job-events";
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const ownerId = request.nextUrl.searchParams.get("ownerId");
   if (!ownerId) {
     return errorResponse("ownerId is required.");
+  }
+
+  const manager = await authorizeOwnerAccess(ownerId);
+  if (manager instanceof NextResponse) {
+    return manager;
   }
 
   const jobs = await listJobs(ownerId);
@@ -26,9 +33,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return errorResponse("Invalid request body.");
   }
 
+  const ownerId = String(body.ownerId ?? "");
+  const manager = await authorizeOwnerAccess(ownerId);
+  if (manager instanceof NextResponse) {
+    return manager;
+  }
+
   try {
     const job = await createJob({
-      ownerId: String(body.ownerId ?? ""),
+      ownerId,
       title: String(body.title ?? ""),
       customerName: String(body.customerName ?? ""),
       customerPhone:
@@ -40,6 +53,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           : undefined,
       tasks: Array.isArray(body.tasks) ? body.tasks.map(String) : [],
     });
+    emitOwnerUpdated(ownerId);
 
     return NextResponse.json(
       {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 
 interface JobSummary {
@@ -37,6 +37,7 @@ export default function ManagerActiveJobsPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [expandedJobIds, setExpandedJobIds] = useState<string[]>([]);
+  const refreshTimerRef = useRef<number | null>(null);
 
   const origin = useMemo(() => {
     if (typeof window === "undefined") {
@@ -45,13 +46,15 @@ export default function ManagerActiveJobsPage() {
     return window.location.origin;
   }, []);
 
-  useEffect(() => {
-    if (!ownerId) {
-      return;
-    }
+  const loadJobs = useCallback(
+    async (silent = false): Promise<void> => {
+      if (!ownerId) {
+        return;
+      }
 
-    async function loadJobs(): Promise<void> {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
       setError(null);
 
       try {
@@ -67,12 +70,56 @@ export default function ManagerActiveJobsPage() {
         const message = loadError instanceof Error ? loadError.message : "Unable to load jobs.";
         setError(message);
       } finally {
-        setLoading(false);
+        if (!silent) {
+          setLoading(false);
+        }
       }
+    },
+    [ownerId],
+  );
+
+  useEffect(() => {
+    void loadJobs();
+  }, [loadJobs]);
+
+  useEffect(() => {
+    if (!ownerId) {
+      return;
     }
 
-    void loadJobs();
-  }, [ownerId]);
+    const source = new EventSource(`/api/events/owner/${ownerId}`);
+
+    source.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { type?: string };
+        if (payload.type !== "owner.updated") {
+          return;
+        }
+
+        if (refreshTimerRef.current) {
+          window.clearTimeout(refreshTimerRef.current);
+        }
+
+        refreshTimerRef.current = window.setTimeout(() => {
+          void loadJobs(true);
+        }, 150);
+      } catch {
+        // no-op
+      }
+    };
+
+    source.onerror = () => {
+      source.close();
+    };
+
+    return () => {
+      source.close();
+      if (refreshTimerRef.current) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+  }, [ownerId, loadJobs]);
 
   useEffect(() => {
     if (!copied) {

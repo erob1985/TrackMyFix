@@ -1,6 +1,5 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import {
   AssignedTechnician,
   CreateJobInput,
@@ -12,24 +11,13 @@ import {
   JobTask,
   Owner,
   OwnerTechnician,
-  StoreData,
   Template,
   UpdateOwnerInput,
 } from "./types";
-
-const DATA_DIR = path.join(process.cwd(), "data");
-const DATA_FILE = path.join(DATA_DIR, "store.json");
-
-const EMPTY_STORE: StoreData = {
-  owners: [],
-  templates: [],
-  jobs: [],
-};
-
-let writeQueue: Promise<void> = Promise.resolve();
+import { prisma } from "./prisma";
+import { formatUsPhone, getUsPhoneDigits, isValidUsPhone } from "./phone";
 
 const nowIso = () => new Date().toISOString();
-
 const token = () => randomBytes(16).toString("hex");
 
 function sanitizeList(items: string[]): string[] {
@@ -47,213 +35,138 @@ function sanitizeTechnicians(items: OwnerTechnician[]): OwnerTechnician[] {
 
     const id = typeof candidate.id === "string" && candidate.id ? candidate.id : randomUUID();
     const name = typeof candidate.name === "string" ? candidate.name.trim() : "";
-    const phone =
-      typeof candidate.phone === "string" && candidate.phone.trim()
-        ? candidate.phone.trim()
-        : undefined;
-
     if (!name || seenIds.has(id)) {
       continue;
     }
 
-    cleaned.push({ id, name, phone });
+    cleaned.push({ id, name });
     seenIds.add(id);
   }
 
   return cleaned;
 }
 
-function normalizeOwner(candidate: Partial<Owner> & { id: string }): Owner {
-  const technicians = Array.isArray(candidate.technicians)
-    ? sanitizeTechnicians(candidate.technicians)
-    : [];
+type DbOwner = Awaited<ReturnType<typeof prisma.owner.findUnique>>;
+type DbOwnerWithTechnicians = Prisma.OwnerGetPayload<{
+  include: { technicians: true };
+}>;
+type DbTemplate = Prisma.TemplateGetPayload<Record<string, never>>;
+type DbJobWithRelations = Prisma.JobGetPayload<{
+  include: { assignedTechnician: true; tasks: true; notes: true };
+}>;
 
-  return {
-    id: candidate.id,
-    name: String(candidate.name ?? ""),
-    email: String(candidate.email ?? ""),
-    businessName: String(candidate.businessName ?? ""),
-    businessPhone: String(candidate.businessPhone ?? ""),
-    technicians,
-    createdAt: String(candidate.createdAt ?? nowIso()),
-  };
-}
-
-function normalizeAssignedTechnician(value: unknown): AssignedTechnician | null {
-  if (!value || typeof value !== "object") {
+function mapAssignedTechnician(
+  technician: { id: string; name: string } | null | undefined,
+): AssignedTechnician | null {
+  if (!technician) {
     return null;
   }
 
-  const candidate = value as Partial<AssignedTechnician>;
-  const id = typeof candidate.id === "string" ? candidate.id : "";
-  const name = typeof candidate.name === "string" ? candidate.name.trim() : "";
-  const phone =
-    typeof candidate.phone === "string" && candidate.phone.trim()
-      ? candidate.phone.trim()
-      : undefined;
-
-  if (!id || !name) {
-    return null;
-  }
-
-  return { id, name, phone };
-}
-
-function normalizeJob(candidate: Partial<Job> & { id: string }): Job {
-  const assignedTechnician = normalizeAssignedTechnician(candidate.assignedTechnician);
-
-  const legacyNotes =
-    typeof (candidate as { notes?: unknown }).notes === "string"
-      ? String((candidate as { notes?: unknown }).notes)
-      : "";
-
-  const noteEntries =
-    Array.isArray(candidate.noteEntries) && candidate.noteEntries.length > 0
-      ? candidate.noteEntries
-          .map((entry) => {
-            if (!entry || typeof entry !== "object") {
-              return null;
-            }
-
-            const value = entry as Partial<JobNoteEntry>;
-            if (!value.message || typeof value.message !== "string") {
-              return null;
-            }
-
-            const authorName =
-              typeof value.authorName === "string" && value.authorName.trim()
-                ? value.authorName.trim()
-                : assignedTechnician?.name ?? "Technician";
-            const authorTechnicianId =
-              typeof value.authorTechnicianId === "string" &&
-              value.authorTechnicianId
-                ? value.authorTechnicianId
-                : assignedTechnician?.id;
-
-            const normalized: JobNoteEntry = {
-              id: typeof value.id === "string" ? value.id : randomUUID(),
-              authorName,
-              message: value.message,
-              createdAt:
-                typeof value.createdAt === "string" ? value.createdAt : nowIso(),
-            };
-            if (authorTechnicianId) {
-              normalized.authorTechnicianId = authorTechnicianId;
-            }
-
-            return normalized;
-          })
-          .filter((entry): entry is JobNoteEntry => Boolean(entry))
-      : legacyNotes.trim()
-        ? [
-            {
-              id: `legacy-${candidate.id}`,
-              authorName: assignedTechnician?.name ?? "Technician",
-              authorTechnicianId: assignedTechnician?.id,
-              message: legacyNotes.trim(),
-              createdAt:
-                typeof candidate.updatedAt === "string"
-                  ? candidate.updatedAt
-                  : nowIso(),
-            },
-          ]
-        : [];
-
   return {
-    id: candidate.id,
-    ownerId: String(candidate.ownerId ?? ""),
-    title: String(candidate.title ?? ""),
-    businessName: String(candidate.businessName ?? ""),
-    customerName: String(candidate.customerName ?? ""),
-    customerPhone:
-      typeof candidate.customerPhone === "string"
-        ? candidate.customerPhone
-        : undefined,
-    location: String(candidate.location ?? ""),
-    businessPhone: String(candidate.businessPhone ?? ""),
-    assignedTechnician,
-    noteEntries,
-    tasks: Array.isArray(candidate.tasks) ? candidate.tasks : [],
-    technicianToken: String(candidate.technicianToken ?? ""),
-    customerToken: String(candidate.customerToken ?? ""),
-    createdAt: String(candidate.createdAt ?? nowIso()),
-    updatedAt: String(candidate.updatedAt ?? nowIso()),
+    id: technician.id,
+    name: technician.name,
   };
 }
 
-async function ensureStore(): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-
-  try {
-    await fs.access(DATA_FILE);
-  } catch {
-    await fs.writeFile(DATA_FILE, JSON.stringify(EMPTY_STORE, null, 2), "utf8");
-  }
+function mapOwner(owner: DbOwnerWithTechnicians): Owner {
+  return {
+    id: owner.id,
+    name: owner.name,
+    email: owner.email,
+    businessName: owner.businessName,
+    businessPhone: owner.businessPhone,
+    technicians: owner.technicians.map((technician) => ({
+      id: technician.id,
+      name: technician.name,
+    })),
+    createdAt: owner.createdAt.toISOString(),
+  };
 }
 
-async function readStore(): Promise<StoreData> {
-  await ensureStore();
-  const raw = await fs.readFile(DATA_FILE, "utf8");
+function mapTemplate(template: DbTemplate): Template {
+  return {
+    id: template.id,
+    ownerId: template.ownerId,
+    name: template.name,
+    tasks: template.tasks,
+    createdAt: template.createdAt.toISOString(),
+  };
+}
 
-  try {
-    const parsed = JSON.parse(raw) as {
-      owners?: unknown[];
-      templates?: Template[];
-      jobs?: unknown[];
-    };
-    const owners = Array.isArray(parsed.owners)
-      ? parsed.owners
-          .filter((owner): owner is Partial<Owner> & { id: string } => {
-            return Boolean(owner && typeof (owner as { id?: unknown }).id === "string");
-          })
-          .map((owner) => normalizeOwner(owner))
-      : [];
+function mapJobTask(task: { id: string; name: string; completed: boolean; updatedAt: Date }): JobTask {
+  return {
+    id: task.id,
+    name: task.name,
+    completed: task.completed,
+    updatedAt: task.updatedAt.toISOString(),
+  };
+}
 
-    const jobs = Array.isArray(parsed.jobs)
-      ? parsed.jobs
-          .filter((job): job is Partial<Job> & { id: string } => {
-            return Boolean(job && typeof (job as { id?: unknown }).id === "string");
-          })
-          .map((job) => normalizeJob(job))
-      : [];
+function getTaskSequenceFromId(taskId: string): number | null {
+  const match = /^(\d+)-/.exec(taskId);
+  if (!match) {
+    return null;
+  }
 
-    const ownersById = new Map(owners.map((owner) => [owner.id, owner]));
-    for (const job of jobs) {
-      if (!job.businessName) {
-        job.businessName = ownersById.get(job.ownerId)?.businessName ?? "";
-      }
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function sortTasksForDisplay(tasks: JobTask[]): JobTask[] {
+  return [...tasks].sort((a, b) => {
+    const aSeq = getTaskSequenceFromId(a.id);
+    const bSeq = getTaskSequenceFromId(b.id);
+
+    if (aSeq !== null && bSeq !== null) {
+      return aSeq - bSeq;
     }
 
-    return {
-      owners,
-      templates: parsed.templates ?? [],
-      jobs,
-    };
-  } catch {
-    return EMPTY_STORE;
-  }
-}
+    if (aSeq !== null) {
+      return -1;
+    }
 
-async function writeStore(store: StoreData): Promise<void> {
-  await fs.writeFile(DATA_FILE, JSON.stringify(store, null, 2), "utf8");
-}
+    if (bSeq !== null) {
+      return 1;
+    }
 
-async function withWriteLock<T>(
-  updater: (store: StoreData) => T | Promise<T>,
-): Promise<T> {
-  const operation = writeQueue.then(async () => {
-    const current = await readStore();
-    const result = await updater(current);
-    await writeStore(current);
-    return result;
+    return a.id.localeCompare(b.id);
   });
+}
 
-  writeQueue = operation.then(
-    () => undefined,
-    () => undefined,
-  );
+function mapJobNoteEntry(entry: {
+  id: string;
+  authorName: string;
+  authorTechnicianId: string | null;
+  message: string;
+  createdAt: Date;
+}): JobNoteEntry {
+  return {
+    id: entry.id,
+    authorName: entry.authorName,
+    authorTechnicianId: entry.authorTechnicianId ?? undefined,
+    message: entry.message,
+    createdAt: entry.createdAt.toISOString(),
+  };
+}
 
-  return operation;
+function mapJob(job: DbJobWithRelations): Job {
+  return {
+    id: job.id,
+    ownerId: job.ownerId,
+    title: job.title,
+    businessName: job.businessName,
+    customerName: job.customerName,
+    customerPhone: job.customerPhone ?? undefined,
+    location: job.location,
+    businessPhone: job.businessPhone,
+    assignedTechnician: mapAssignedTechnician(job.assignedTechnician),
+    noteEntries: job.notes.map(mapJobNoteEntry),
+    tasks: sortTasksForDisplay(job.tasks.map(mapJobTask)),
+    technicianToken: job.technicianToken,
+    customerToken: job.customerToken,
+    createdAt: job.createdAt.toISOString(),
+    updatedAt: job.updatedAt.toISOString(),
+  };
 }
 
 function sortByUpdatedAtDesc<T extends { updatedAt: string }>(items: T[]): T[] {
@@ -266,6 +179,23 @@ function sortNoteEntriesDesc(noteEntries: JobNoteEntry[]): JobNoteEntry[] {
   return [...noteEntries].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
+}
+
+async function getJobWithRelationsById(jobId: string): Promise<Job | null> {
+  const job = await prisma.job.findUnique({
+    where: { id: jobId },
+    include: {
+      assignedTechnician: true,
+      tasks: true,
+      notes: true,
+    },
+  });
+
+  if (!job) {
+    return null;
+  }
+
+  return mapJob(job);
 }
 
 export function toJobSession(job: Job): JobSession {
@@ -297,31 +227,68 @@ export async function createOwner(input: CreateOwnerInput): Promise<Owner> {
   const name = input.name.trim();
   const email = input.email.trim().toLowerCase();
   const businessName = input.businessName.trim();
-  const businessPhone = input.businessPhone.trim();
+  const businessPhone = formatUsPhone(input.businessPhone.trim());
 
   if (!name || !email || !businessName || !businessPhone) {
     throw new Error("All owner fields are required.");
   }
+  if (!isValidUsPhone(businessPhone)) {
+    throw new Error("Business phone must be a valid 10-digit phone number.");
+  }
 
-  return withWriteLock((store) => {
-    const owner: Owner = {
+  const owner = await prisma.owner.create({
+    data: {
       id: randomUUID(),
       name,
       email,
       businessName,
       businessPhone,
-      technicians: [],
-      createdAt: nowIso(),
-    };
-
-    store.owners.push(owner);
-    return owner;
+      createdAt: new Date(),
+    },
+    include: {
+      technicians: true,
+    },
   });
+
+  return mapOwner(owner);
 }
 
 export async function getOwner(ownerId: string): Promise<Owner | null> {
-  const store = await readStore();
-  return store.owners.find((owner) => owner.id === ownerId) ?? null;
+  const owner = await prisma.owner.findUnique({
+    where: { id: ownerId },
+    include: {
+      technicians: true,
+    },
+  });
+
+  if (!owner) {
+    return null;
+  }
+
+  return mapOwner(owner);
+}
+
+export async function getOwnerByEmail(email: string): Promise<Owner | null> {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) {
+    return null;
+  }
+
+  const owner = await prisma.owner.findFirst({
+    where: { email: normalizedEmail },
+    include: {
+      technicians: true,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+  if (!owner) {
+    return null;
+  }
+
+  return mapOwner(owner);
 }
 
 export async function updateOwner(
@@ -331,7 +298,7 @@ export async function updateOwner(
   const name = input.name.trim();
   const email = input.email.trim().toLowerCase();
   const businessName = input.businessName.trim();
-  const businessPhone = input.businessPhone.trim();
+  const businessPhone = formatUsPhone(input.businessPhone.trim());
   const technicians = input.technicians
     ? sanitizeTechnicians(input.technicians)
     : undefined;
@@ -339,31 +306,70 @@ export async function updateOwner(
   if (!ownerId || !name || !email || !businessName || !businessPhone) {
     throw new Error("All owner fields are required.");
   }
+  if (!isValidUsPhone(businessPhone)) {
+    throw new Error("Business phone must be a valid 10-digit phone number.");
+  }
 
-  return withWriteLock((store) => {
-    const owner = store.owners.find((candidate) => candidate.id === ownerId);
-    if (!owner) {
-      return null;
-    }
+  const owner = await prisma.owner.findUnique({ where: { id: ownerId } });
+  if (!owner) {
+    return null;
+  }
 
-    owner.name = name;
-    owner.email = email;
-    owner.businessName = businessName;
-    owner.businessPhone = businessPhone;
+  await prisma.$transaction(async (tx) => {
+    await tx.owner.update({
+      where: { id: ownerId },
+      data: {
+        name,
+        email,
+        businessName,
+        businessPhone,
+      },
+    });
+
     if (technicians) {
-      owner.technicians = technicians;
-    }
+      if (technicians.length === 0) {
+        await tx.ownerTechnician.deleteMany({ where: { ownerId } });
+      } else {
+        const keepIds = technicians.map((technician) => technician.id);
+        await tx.ownerTechnician.deleteMany({
+          where: {
+            ownerId,
+            id: { notIn: keepIds },
+          },
+        });
 
-    // Keep existing jobs in sync so customer views use latest business details.
-    for (const job of store.jobs) {
-      if (job.ownerId === ownerId) {
-        job.businessName = businessName;
-        job.businessPhone = businessPhone;
+        for (const technician of technicians) {
+          await tx.ownerTechnician.upsert({
+            where: { id: technician.id },
+            update: {
+              name: technician.name,
+              ownerId,
+            },
+            create: {
+              id: technician.id,
+              ownerId,
+              name: technician.name,
+            },
+          });
+        }
       }
     }
 
-    return owner;
+    await tx.job.updateMany({
+      where: { ownerId },
+      data: {
+        businessName,
+        businessPhone,
+      },
+    });
   });
+
+  const updated = await prisma.owner.findUnique({
+    where: { id: ownerId },
+    include: { technicians: true },
+  });
+
+  return updated ? mapOwner(updated) : null;
 }
 
 export async function deleteOwner(ownerId: string): Promise<Owner | null> {
@@ -371,25 +377,26 @@ export async function deleteOwner(ownerId: string): Promise<Owner | null> {
     throw new Error("Owner ID is required.");
   }
 
-  return withWriteLock((store) => {
-    const ownerIndex = store.owners.findIndex((owner) => owner.id === ownerId);
-    if (ownerIndex === -1) {
-      return null;
-    }
-
-    const [deletedOwner] = store.owners.splice(ownerIndex, 1);
-    store.templates = store.templates.filter(
-      (template) => template.ownerId !== ownerId,
-    );
-    store.jobs = store.jobs.filter((job) => job.ownerId !== ownerId);
-
-    return deletedOwner ?? null;
+  const owner = await prisma.owner.findUnique({
+    where: { id: ownerId },
+    include: { technicians: true },
   });
+
+  if (!owner) {
+    return null;
+  }
+
+  await prisma.owner.delete({ where: { id: ownerId } });
+  return mapOwner(owner);
 }
 
 export async function listTemplates(ownerId: string): Promise<Template[]> {
-  const store = await readStore();
-  return store.templates.filter((template) => template.ownerId === ownerId);
+  const templates = await prisma.template.findMany({
+    where: { ownerId },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return templates.map(mapTemplate);
 }
 
 export async function updateTemplateByOwner(
@@ -405,37 +412,48 @@ export async function updateTemplateByOwner(
     throw new Error("Template name and at least one task are required.");
   }
 
-  return withWriteLock((store) => {
-    const template = store.templates.find(
-      (candidate) =>
-        candidate.id === templateId && candidate.ownerId === ownerId,
-    );
-    if (!template) {
-      return null;
-    }
-
-    template.name = nextName;
-    template.tasks = nextTasks;
-    return template;
+  const template = await prisma.template.findFirst({
+    where: {
+      id: templateId,
+      ownerId,
+    },
   });
+
+  if (!template) {
+    return null;
+  }
+
+  const updated = await prisma.template.update({
+    where: { id: templateId },
+    data: {
+      name: nextName,
+      tasks: nextTasks,
+    },
+  });
+
+  return mapTemplate(updated);
 }
 
 export async function deleteTemplateByOwner(
   ownerId: string,
   templateId: string,
 ): Promise<Template | null> {
-  return withWriteLock((store) => {
-    const index = store.templates.findIndex(
-      (template) =>
-        template.id === templateId && template.ownerId === ownerId,
-    );
-    if (index === -1) {
-      return null;
-    }
-
-    const [deleted] = store.templates.splice(index, 1);
-    return deleted ?? null;
+  const template = await prisma.template.findFirst({
+    where: {
+      id: templateId,
+      ownerId,
+    },
   });
+
+  if (!template) {
+    return null;
+  }
+
+  await prisma.template.delete({
+    where: { id: templateId },
+  });
+
+  return mapTemplate(template);
 }
 
 export async function createTemplate(
@@ -448,35 +466,47 @@ export async function createTemplate(
     throw new Error("Template name and at least one task are required.");
   }
 
-  return withWriteLock((store) => {
-    const owner = store.owners.find((candidate) => candidate.id === input.ownerId);
-    if (!owner) {
-      throw new Error("Owner account not found.");
-    }
+  const owner = await prisma.owner.findUnique({
+    where: { id: input.ownerId },
+  });
 
-    const template: Template = {
+  if (!owner) {
+    throw new Error("Owner account not found.");
+  }
+
+  const template = await prisma.template.create({
+    data: {
       id: randomUUID(),
       ownerId: input.ownerId,
       name,
       tasks,
-      createdAt: nowIso(),
-    };
-
-    store.templates.push(template);
-    return template;
+      createdAt: new Date(),
+    },
   });
+
+  return mapTemplate(template);
 }
 
 export async function listJobs(ownerId: string): Promise<Job[]> {
-  const store = await readStore();
-  const jobs = store.jobs.filter((job) => job.ownerId === ownerId);
-  return sortByUpdatedAtDesc(jobs);
+  const jobs = await prisma.job.findMany({
+    where: { ownerId },
+    include: {
+      assignedTechnician: true,
+      tasks: true,
+      notes: true,
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  return sortByUpdatedAtDesc(jobs.map(mapJob));
 }
 
 export async function createJob(input: CreateJobInput): Promise<Job> {
   const title = input.title.trim();
   const customerName = input.customerName.trim();
-  const customerPhone = input.customerPhone?.trim();
+  const customerPhoneRaw = input.customerPhone?.trim();
+  const customerPhoneDigits = customerPhoneRaw ? getUsPhoneDigits(customerPhoneRaw) : "";
+  const customerPhone = customerPhoneDigits.length === 10 ? formatUsPhone(customerPhoneDigits) : undefined;
   const location = input.location.trim();
   const assignedTechnicianId = input.assignedTechnicianId?.trim();
   const taskNames = sanitizeList(input.tasks);
@@ -486,100 +516,115 @@ export async function createJob(input: CreateJobInput): Promise<Job> {
       "Job title, customer, location, and at least one task are required.",
     );
   }
+  if (customerPhoneRaw && customerPhoneDigits.length !== 10) {
+    throw new Error("Customer phone must be a valid 10-digit phone number.");
+  }
 
-  return withWriteLock((store) => {
-    const owner = store.owners.find((candidate) => candidate.id === input.ownerId);
-    if (!owner) {
-      throw new Error("Owner account not found.");
+  const owner = await prisma.owner.findUnique({
+    where: { id: input.ownerId },
+    include: { technicians: true },
+  });
+
+  if (!owner) {
+    throw new Error("Owner account not found.");
+  }
+
+  let nextAssignedTechnicianId: string | null = null;
+  if (owner.technicians.length > 0) {
+    if (!assignedTechnicianId) {
+      throw new Error("Select a lead technician for this job.");
     }
 
-    let assignedTechnician: AssignedTechnician | null = null;
-    if (owner.technicians.length > 0) {
-      if (!assignedTechnicianId) {
-        throw new Error("Select a lead technician for this job.");
-      }
-
-      const selected = owner.technicians.find(
-        (technician) => technician.id === assignedTechnicianId,
-      );
-      if (!selected) {
-        throw new Error("Assigned technician was not found.");
-      }
-
-      assignedTechnician = {
-        id: selected.id,
-        name: selected.name,
-        phone: selected.phone,
-      };
-    } else if (assignedTechnicianId) {
+    const selected = owner.technicians.find(
+      (technician) => technician.id === assignedTechnicianId,
+    );
+    if (!selected) {
       throw new Error("Assigned technician was not found.");
     }
+    nextAssignedTechnicianId = selected.id;
+  } else if (assignedTechnicianId) {
+    throw new Error("Assigned technician was not found.");
+  }
 
-    const timestamp = nowIso();
-    const tasks: JobTask[] = taskNames.map((name) => ({
-      id: randomUUID(),
-      name,
-      completed: false,
-      updatedAt: timestamp,
-    }));
-
-    const job: Job = {
-      id: randomUUID(),
+  const timestamp = new Date();
+  const jobId = randomUUID();
+  const job = await prisma.job.create({
+    data: {
+      id: jobId,
       ownerId: input.ownerId,
+      assignedTechnicianId: nextAssignedTechnicianId,
       title,
       businessName: owner.businessName,
       customerName,
       customerPhone,
       location,
       businessPhone: owner.businessPhone,
-      assignedTechnician,
-      noteEntries: [],
-      tasks,
       technicianToken: token(),
       customerToken: token(),
       createdAt: timestamp,
       updatedAt: timestamp,
-    };
-
-    store.jobs.push(job);
-    return job;
+      tasks: {
+        create: taskNames.map((taskName, index) => ({
+          // Prefix with stable sequence so task order remains deterministic.
+          id: `${String(index).padStart(4, "0")}-${randomUUID()}`,
+          name: taskName,
+          completed: false,
+          updatedAt: timestamp,
+        })),
+      },
+    },
+    include: {
+      assignedTechnician: true,
+      tasks: true,
+      notes: true,
+    },
   });
+
+  return mapJob(job);
 }
 
 export async function deleteJobByOwner(
   ownerId: string,
   jobId: string,
 ): Promise<Job | null> {
-  return withWriteLock((store) => {
-    const index = store.jobs.findIndex(
-      (job) => job.id === jobId && job.ownerId === ownerId,
-    );
-
-    if (index === -1) {
-      return null;
-    }
-
-    const [deleted] = store.jobs.splice(index, 1);
-    return deleted ?? null;
+  const job = await prisma.job.findFirst({
+    where: {
+      id: jobId,
+      ownerId,
+    },
+    include: {
+      assignedTechnician: true,
+      tasks: true,
+      notes: true,
+    },
   });
+
+  if (!job) {
+    return null;
+  }
+
+  await prisma.job.delete({ where: { id: jobId } });
+  return mapJob(job);
 }
 
 export async function getJobById(jobId: string): Promise<Job | null> {
-  const store = await readStore();
-  return store.jobs.find((job) => job.id === jobId) ?? null;
+  return getJobWithRelationsById(jobId);
 }
 
 export async function getJobByToken(
   role: "customer" | "technician",
   value: string,
 ): Promise<Job | null> {
-  const store = await readStore();
+  const job = await prisma.job.findUnique({
+    where: role === "customer" ? { customerToken: value } : { technicianToken: value },
+    include: {
+      assignedTechnician: true,
+      tasks: true,
+      notes: true,
+    },
+  });
 
-  if (role === "customer") {
-    return store.jobs.find((job) => job.customerToken === value) ?? null;
-  }
-
-  return store.jobs.find((job) => job.technicianToken === value) ?? null;
+  return job ? mapJob(job) : null;
 }
 
 export async function updateTaskByTechnicianToken(
@@ -587,44 +632,66 @@ export async function updateTaskByTechnicianToken(
   taskId: string,
   completed?: boolean,
 ): Promise<Job | null> {
-  return withWriteLock((store) => {
-    const job = store.jobs.find((candidate) => candidate.technicianToken === technicianToken);
-    if (!job) {
-      return null;
-    }
-
-    const task = job.tasks.find((candidate) => candidate.id === taskId);
-    if (!task) {
-      throw new Error("Task not found.");
-    }
-
-    task.completed = completed ?? !task.completed;
-    task.updatedAt = nowIso();
-    job.updatedAt = nowIso();
-
-    return job;
+  const job = await prisma.job.findUnique({
+    where: { technicianToken },
+    include: { tasks: true },
   });
+
+  if (!job) {
+    return null;
+  }
+
+  const task = job.tasks.find((candidate) => candidate.id === taskId);
+  if (!task) {
+    throw new Error("Task not found.");
+  }
+
+  const timestamp = new Date();
+  await prisma.$transaction([
+    prisma.jobTask.update({
+      where: { id: taskId },
+      data: {
+        completed: typeof completed === "boolean" ? completed : !task.completed,
+        updatedAt: timestamp,
+      },
+    }),
+    prisma.job.update({
+      where: { id: job.id },
+      data: { updatedAt: timestamp },
+    }),
+  ]);
+
+  return getJobWithRelationsById(job.id);
 }
 
 export async function setAllTasksByTechnicianToken(
   technicianToken: string,
   completed: boolean,
 ): Promise<Job | null> {
-  return withWriteLock((store) => {
-    const job = store.jobs.find((candidate) => candidate.technicianToken === technicianToken);
-    if (!job) {
-      return null;
-    }
-
-    const timestamp = nowIso();
-    for (const task of job.tasks) {
-      task.completed = completed;
-      task.updatedAt = timestamp;
-    }
-    job.updatedAt = timestamp;
-
-    return job;
+  const job = await prisma.job.findUnique({
+    where: { technicianToken },
   });
+
+  if (!job) {
+    return null;
+  }
+
+  const timestamp = new Date();
+  await prisma.$transaction([
+    prisma.jobTask.updateMany({
+      where: { jobId: job.id },
+      data: {
+        completed,
+        updatedAt: timestamp,
+      },
+    }),
+    prisma.job.update({
+      where: { id: job.id },
+      data: { updatedAt: timestamp },
+    }),
+  ]);
+
+  return getJobWithRelationsById(job.id);
 }
 
 export async function updateNotesByTechnicianToken(
@@ -636,24 +703,32 @@ export async function updateNotesByTechnicianToken(
     throw new Error("Note cannot be empty.");
   }
 
-  return withWriteLock((store) => {
-    const job = store.jobs.find((candidate) => candidate.technicianToken === technicianToken);
-    if (!job) {
-      return null;
-    }
-
-    const timestamp = nowIso();
-    const authorName = job.assignedTechnician?.name ?? "Technician";
-    const authorTechnicianId = job.assignedTechnician?.id;
-    job.noteEntries.push({
-      id: randomUUID(),
-      authorName,
-      authorTechnicianId,
-      message,
-      createdAt: timestamp,
-    });
-    job.updatedAt = timestamp;
-
-    return job;
+  const job = await prisma.job.findUnique({
+    where: { technicianToken },
+    include: { assignedTechnician: true },
   });
+
+  if (!job) {
+    return null;
+  }
+
+  const timestamp = new Date();
+  await prisma.$transaction([
+    prisma.jobNoteEntry.create({
+      data: {
+        id: randomUUID(),
+        jobId: job.id,
+        authorName: job.assignedTechnician?.name ?? "Technician",
+        authorTechnicianId: job.assignedTechnician?.id ?? null,
+        message,
+        createdAt: timestamp,
+      },
+    }),
+    prisma.job.update({
+      where: { id: job.id },
+      data: { updatedAt: timestamp },
+    }),
+  ]);
+
+  return getJobWithRelationsById(job.id);
 }

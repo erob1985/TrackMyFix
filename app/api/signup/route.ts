@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createOwner } from "@/lib/store";
 import { errorResponse } from "@/lib/api";
+import { requireManagerIdentity } from "@/lib/auth";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const manager = await requireManagerIdentity();
+  if (manager instanceof NextResponse) {
+    return manager;
+  }
+
   const body = await request.json().catch(() => null);
 
   if (!body) {
@@ -10,9 +16,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
+    const submittedEmail = String(body.email ?? "")
+      .trim()
+      .toLowerCase();
+
+    if (submittedEmail && submittedEmail !== manager.email) {
+      return errorResponse(
+        "Manager email must match your authenticated account email.",
+        403,
+      );
+    }
+
     const owner = await createOwner({
       name: String(body.name ?? ""),
-      email: String(body.email ?? ""),
+      email: manager.email,
       businessName: String(body.businessName ?? ""),
       businessPhone: String(body.businessPhone ?? ""),
     });

@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Owner {
+  id            String            @id
+  name          String
+  email         String
+  businessName  String
+  businessPhone String
+  createdAt     DateTime
+  technicians   OwnerTechnician[]
+  templates     Template[]
+  jobs          Job[]
+
+  @@index([email])
+}
+
+model OwnerTechnician {
+  id      String @id
+  ownerId String
+  name    String
+
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  jobs  Job[]
+
+  @@index([ownerId])
+}
+
+model Template {
+  id        String   @id
+  ownerId   String
+  name      String
+  tasks     String[]
+  createdAt DateTime
+
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId])
+}
+
+model Job {
+  id                   String   @id
+  ownerId              String
+  assignedTechnicianId String?
+  title                String
+  businessName         String
+  customerName         String
+  customerPhone        String?
+  location             String
+  businessPhone        String
+  technicianToken      String   @unique
+  customerToken        String   @unique
+  createdAt            DateTime
+  updatedAt            DateTime
+
+  owner              Owner            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  assignedTechnician OwnerTechnician? @relation(fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
+  tasks              JobTask[]
+  notes              JobNoteEntry[]
+
+  @@index([ownerId])
+  @@index([assignedTechnicianId])
+}
+
+model JobTask {
+  id        String   @id
+  jobId     String
+  name      String
+  completed Boolean
+  updatedAt DateTime
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+}
+
+model JobNoteEntry {
+  id                 String   @id
+  jobId              String
+  authorName         String
+  authorTechnicianId String?
+  message            String
+  createdAt          DateTime
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+}

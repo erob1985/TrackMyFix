@@ -1,28 +1,71 @@
-import { EventEmitter } from "node:events";
 import { Job } from "./types";
+import { upstashRedis } from "./upstash";
 
-declare global {
-  var trackMyFixEmitter: EventEmitter | undefined;
+function sequenceKey(jobId: string): string {
+  return `trackmyfix:job:seq:${jobId}`;
 }
 
-const emitter = global.trackMyFixEmitter ?? new EventEmitter();
-emitter.setMaxListeners(100);
-
-if (!global.trackMyFixEmitter) {
-  global.trackMyFixEmitter = emitter;
+function ownerSequenceKey(ownerId: string): string {
+  return `trackmyfix:owner:seq:${ownerId}`;
 }
 
-function eventName(jobId: string): string {
-  return `job.updated.${jobId}`;
+async function incrementJobSequence(jobId: string): Promise<void> {
+  if (!upstashRedis) {
+    return;
+  }
+
+  await upstashRedis.incr(sequenceKey(jobId));
+}
+
+async function incrementOwnerSequence(ownerId: string): Promise<void> {
+  if (!upstashRedis) {
+    return;
+  }
+
+  await upstashRedis.incr(ownerSequenceKey(ownerId));
+}
+
+export async function getJobUpdateSequence(jobId: string): Promise<number> {
+  if (!upstashRedis) {
+    return 0;
+  }
+
+  const value = await upstashRedis.get(sequenceKey(jobId));
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  return 0;
+}
+
+export async function getOwnerUpdateSequence(ownerId: string): Promise<number> {
+  if (!upstashRedis) {
+    return 0;
+  }
+
+  const value = await upstashRedis.get(ownerSequenceKey(ownerId));
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  return 0;
 }
 
 export function emitJobUpdated(job: Job): void {
-  emitter.emit(eventName(job.id), job);
+  void Promise.all([
+    incrementJobSequence(job.id),
+    incrementOwnerSequence(job.ownerId),
+  ]);
 }
 
-export function onJobUpdated(jobId: string, callback: (job: Job) => void): () => void {
-  emitter.on(eventName(jobId), callback);
-  return () => {
-    emitter.off(eventName(jobId), callback);
-  };
+export function emitOwnerUpdated(ownerId: string): void {
+  void incrementOwnerSequence(ownerId);
 }
