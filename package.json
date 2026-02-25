@@ -27,7 +27,7 @@
 		"dev:local": "npm run env:local && next dev",
 		"dev:cloud": "npm run env:cloud && next dev",
 		"dev": "next dev",
-		"build": "next build",
+		"build": "prisma generate && next build",
 		"start": "next start",
 		"lint": "next lint",
 		"db:import-local": "tsx scripts/import-store.ts"
