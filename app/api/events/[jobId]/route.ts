@@ -36,6 +36,11 @@ export async function GET(
   let polling = false;
   let closed = false;
   let lastSequence = await getJobUpdateSequence(jobId);
+  const pollIntervalMs = Number(process.env.JOB_EVENTS_POLL_MS ?? "2000");
+  const safePollIntervalMs =
+    Number.isFinite(pollIntervalMs) && pollIntervalMs >= 500
+      ? pollIntervalMs
+      : 2000;
 
   const stream = new ReadableStream({
     start(controller) {
@@ -66,7 +71,7 @@ export async function GET(
         } finally {
           polling = false;
         }
-      }, 1000);
+      }, safePollIntervalMs);
 
       heartbeat = setInterval(() => {
         if (closed) {

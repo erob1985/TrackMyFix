@@ -22,6 +22,11 @@ export async function GET(
   let polling = false;
   let closed = false;
   let lastSequence = await getOwnerUpdateSequence(ownerId);
+  const pollIntervalMs = Number(process.env.OWNER_EVENTS_POLL_MS ?? "5000");
+  const safePollIntervalMs =
+    Number.isFinite(pollIntervalMs) && pollIntervalMs >= 500
+      ? pollIntervalMs
+      : 5000;
 
   const stream = new ReadableStream({
     start(controller) {
@@ -49,7 +54,7 @@ export async function GET(
         } finally {
           polling = false;
         }
-      }, 1000);
+      }, safePollIntervalMs);
 
       heartbeat = setInterval(() => {
         if (closed) {
@@ -77,4 +82,3 @@ export async function GET(
     },
   });
 }
-

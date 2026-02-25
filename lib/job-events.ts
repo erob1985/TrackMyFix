@@ -1,6 +1,8 @@
 import { Job } from "./types";
 import { upstashRedis } from "./upstash";
 
+const inMemorySequenceStore = new Map<string, number>();
+
 function sequenceKey(jobId: string): string {
   return `trackmyfix:job:seq:${jobId}`;
 }
@@ -10,27 +12,35 @@ function ownerSequenceKey(ownerId: string): string {
 }
 
 async function incrementJobSequence(jobId: string): Promise<void> {
-  if (!upstashRedis) {
+  const key = sequenceKey(jobId);
+
+  if (upstashRedis) {
+    await upstashRedis.incr(key);
     return;
   }
 
-  await upstashRedis.incr(sequenceKey(jobId));
+  inMemorySequenceStore.set(key, (inMemorySequenceStore.get(key) ?? 0) + 1);
 }
 
 async function incrementOwnerSequence(ownerId: string): Promise<void> {
-  if (!upstashRedis) {
+  const key = ownerSequenceKey(ownerId);
+
+  if (upstashRedis) {
+    await upstashRedis.incr(key);
     return;
   }
 
-  await upstashRedis.incr(ownerSequenceKey(ownerId));
+  inMemorySequenceStore.set(key, (inMemorySequenceStore.get(key) ?? 0) + 1);
 }
 
 export async function getJobUpdateSequence(jobId: string): Promise<number> {
+  const key = sequenceKey(jobId);
+
   if (!upstashRedis) {
-    return 0;
+    return inMemorySequenceStore.get(key) ?? 0;
   }
 
-  const value = await upstashRedis.get(sequenceKey(jobId));
+  const value = await upstashRedis.get(key);
   if (typeof value === "number") {
     return value;
   }
@@ -43,11 +53,13 @@ export async function getJobUpdateSequence(jobId: string): Promise<number> {
 }
 
 export async function getOwnerUpdateSequence(ownerId: string): Promise<number> {
+  const key = ownerSequenceKey(ownerId);
+
   if (!upstashRedis) {
-    return 0;
+    return inMemorySequenceStore.get(key) ?? 0;
   }
 
-  const value = await upstashRedis.get(ownerSequenceKey(ownerId));
+  const value = await upstashRedis.get(key);
   if (typeof value === "number") {
     return value;
   }

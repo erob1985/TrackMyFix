@@ -106,27 +106,56 @@ export default function CustomerJobPage() {
       return;
     }
 
-    const source = new EventSource(
-      `/api/events/${job.id}?role=customer&token=${encodeURIComponent(token)}`,
-    );
+    let source: EventSource | null = null;
 
-    source.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data) as { type: string; job: JobSession };
-        if (payload.job) {
-          setJob(payload.job);
+    const connect = () => {
+      if (source || document.visibilityState !== "visible") {
+        return;
+      }
+
+      source = new EventSource(
+        `/api/events/${job.id}?role=customer&token=${encodeURIComponent(token)}`,
+      );
+
+      source.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data) as { type: string; job: JobSession };
+          if (payload.job) {
+            setJob(payload.job);
+          }
+        } catch {
+          // no-op
         }
-      } catch {
-        // no-op
+      };
+
+      source.onerror = () => {
+        source?.close();
+        source = null;
+      };
+    };
+
+    const disconnect = () => {
+      if (!source) {
+        return;
+      }
+      source.close();
+      source = null;
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        connect();
+      } else {
+        disconnect();
       }
     };
 
-    source.onerror = () => {
-      source.close();
-    };
+    connect();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      source.close();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      disconnect();
     };
   }, [job?.id, token]);
 

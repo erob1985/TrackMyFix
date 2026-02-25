@@ -38,6 +38,8 @@ export default function ManagerActiveJobsPage() {
   const [copied, setCopied] = useState<string | null>(null);
   const [expandedJobIds, setExpandedJobIds] = useState<string[]>([]);
   const refreshTimerRef = useRef<number | null>(null);
+  const refreshInFlightRef = useRef(false);
+  const refreshQueuedRef = useRef(false);
 
   const origin = useMemo(() => {
     if (typeof window === "undefined") {
@@ -87,37 +89,91 @@ export default function ManagerActiveJobsPage() {
       return;
     }
 
-    const source = new EventSource(`/api/events/owner/${ownerId}`);
+    let source: EventSource | null = null;
+    const refreshDebounceMs = 500;
 
-    source.onmessage = (event) => {
+    const runRefresh = async (): Promise<void> => {
+      if (refreshInFlightRef.current) {
+        refreshQueuedRef.current = true;
+        return;
+      }
+
+      refreshInFlightRef.current = true;
       try {
-        const payload = JSON.parse(event.data) as { type?: string };
-        if (payload.type !== "owner.updated") {
-          return;
-        }
+        await loadJobs(true);
+      } finally {
+        refreshInFlightRef.current = false;
+      }
 
-        if (refreshTimerRef.current) {
-          window.clearTimeout(refreshTimerRef.current);
-        }
-
-        refreshTimerRef.current = window.setTimeout(() => {
-          void loadJobs(true);
-        }, 150);
-      } catch {
-        // no-op
+      if (refreshQueuedRef.current) {
+        refreshQueuedRef.current = false;
+        scheduleRefresh();
       }
     };
 
-    source.onerror = () => {
-      source.close();
+    const scheduleRefresh = (): void => {
+      if (refreshTimerRef.current) {
+        return;
+      }
+
+      refreshTimerRef.current = window.setTimeout(() => {
+        refreshTimerRef.current = null;
+        void runRefresh();
+      }, refreshDebounceMs);
     };
 
-    return () => {
+    const connect = () => {
+      if (source || document.visibilityState !== "visible") {
+        return;
+      }
+      source = new EventSource(`/api/events/owner/${ownerId}`);
+
+      source.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data) as { type?: string };
+          if (payload.type !== "owner.updated") {
+            return;
+          }
+
+          scheduleRefresh();
+        } catch {
+          // no-op
+        }
+      };
+
+      source.onerror = () => {
+        source?.close();
+        source = null;
+      };
+    };
+
+    const disconnect = () => {
+      if (!source) {
+        return;
+      }
       source.close();
+      source = null;
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        connect();
+      } else {
+        disconnect();
+      }
+    };
+
+    connect();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      disconnect();
       if (refreshTimerRef.current) {
         window.clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = null;
       }
+      refreshQueuedRef.current = false;
     };
   }, [ownerId, loadJobs]);
 
