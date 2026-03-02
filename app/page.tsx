@@ -13,6 +13,77 @@ interface OwnerPayload {
   businessPhone: string;
 }
 
+function TrackMyFixLogo() {
+  return (
+    <div className="tmf-logo" aria-hidden="true">
+      <div className="tmf-logo-core">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="tmf-logo-wrench"
+          role="img"
+        >
+          <path
+            d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"
+          />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function LiveDemoPanel() {
+  return (
+    <div className="home-demo" aria-hidden="true">
+      <div className="home-demo-head">
+        <span className="home-demo-dot" />
+        <span className="home-demo-dot" />
+        <span className="home-demo-dot" />
+      </div>
+      <div className="home-demo-body">
+        <p className="home-demo-kicker">Service Job 1</p>
+        <div className="home-demo-sync-grid">
+          <div className="home-demo-sync-card">
+            <p className="home-demo-sync-title">Technician</p>
+            <div className="home-demo-task-item demo-check-1">
+              <span className="home-demo-checkbox">✓</span>
+              <span className="home-demo-task-label">Pre-check complete</span>
+            </div>
+            <div className="home-demo-task-item demo-check-2">
+              <span className="home-demo-checkbox">✓</span>
+              <span className="home-demo-task-label">Install and test</span>
+            </div>
+            <div className="home-demo-task-item demo-check-3">
+              <span className="home-demo-checkbox">✓</span>
+              <span className="home-demo-task-label">Final cleanup</span>
+            </div>
+          </div>
+          <div className="home-demo-sync-card">
+            <p className="home-demo-sync-title">Customer</p>
+            <p className="home-demo-sync-caption">Progress updates instantly</p>
+            <div className="home-demo-progress">
+              <div className="home-demo-progress-fill" />
+            </div>
+            <p className="home-demo-sync-count">
+              <span className="count-0">0 of 3 tasks complete</span>
+              <span className="count-1">1 of 3 tasks complete</span>
+              <span className="count-2">2 of 3 tasks complete</span>
+              <span className="count-3">3 of 3 tasks complete</span>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function HomePage() {
   const router = useRouter();
   const { user } = useUser();
@@ -136,8 +207,8 @@ export default function HomePage() {
   }
 
   return (
-    <main className="app-shell">
-      <section className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <main className="app-shell app-shell-home">
+      <section className="card home-topbar">
         <p className="kicker" style={{ margin: 0 }}>Manager Access</p>
         <SignedIn>
           <UserButton afterSignOutUrl="/" />
@@ -149,33 +220,64 @@ export default function HomePage() {
         </SignedOut>
       </section>
 
-      <section className="card">
-        <p className="kicker">TrackMyFix</p>
-        <h1 className="page-title">Service Job Tracking</h1>
-        <p className="page-subtitle">
-          Create jobs, send unique customer/technician links, and keep everyone synced in
-          real time.
-        </p>
+      <section className="card home-hero">
+        <div>
+          <p className="kicker">TrackMyFix</p>
+          <h1 className="home-title">Keep Every Service Job Visible In Real Time</h1>
+          <p className="home-subtitle">
+            Give managers, technicians, and customers a shared live view of job progress.
+            Create jobs in seconds and reduce inbound status calls.
+          </p>
+          <div className="home-chip-row">
+            <span className="home-chip">Live Progress</span>
+            <span className="home-chip">Customer Links</span>
+            <span className="home-chip">Technician Notes</span>
+          </div>
+        </div>
+        <div className="home-visual-stack">
+          <TrackMyFixLogo />
+          <LiveDemoPanel />
+        </div>
+      </section>
+
+      <section className="home-grid">
+        <article className="card">
+          <h2 className="section-heading">How It Works</h2>
+          <div className="home-step-list">
+            <p><strong>1.</strong> Manager creates a job and assigns a lead technician.</p>
+            <p><strong>2.</strong> Technician checks off tasks from a mobile-friendly checklist.</p>
+            <p><strong>3.</strong> Customer sees progress updates instantly from a private link.</p>
+          </div>
+        </article>
+
+        <article className="card">
+          <h2 className="section-heading">Built For Field Teams</h2>
+          <div className="home-feature-list">
+            <p>Large touch-friendly controls for technicians on mobile devices.</p>
+            <p>Template-based tasklists for repeat jobs and faster setup.</p>
+            <p>Manager dashboard with active jobs and completion visibility.</p>
+          </div>
+        </article>
       </section>
 
       <SignedIn>
         {lookupPending ? (
-          <section className="card">
+          <section className="card home-access">
             <h2 className="section-heading">Manager Access</h2>
             <p className="page-subtitle">Loading your account details...</p>
           </section>
         ) : existingOwner ? (
-          <section className="card">
+          <section className="card home-access">
             <h2 className="section-heading">Opening Your Dashboard</h2>
             <p className="page-subtitle">
               Welcome back. Redirecting you to {existingOwner.businessName}.
             </p>
           </section>
         ) : (
-          <section className="card">
+          <section className="card home-access">
             <h2 className="section-heading">Initial Account Setup</h2>
             <p className="page-subtitle">
-              Set up your manager dashboard for templates and jobs.
+              Start your manager workspace to create templates, jobs, and live status links.
             </p>
             <form className="form-grid" onSubmit={handleSignup}>
               <label>
@@ -224,11 +326,16 @@ export default function HomePage() {
       </SignedIn>
 
       <SignedOut>
-        <section className="card">
-          <h2 className="section-heading">Sign In Required</h2>
+        <section className="card home-access">
+          <h2 className="section-heading">Start Free In Minutes</h2>
           <p className="page-subtitle">
-            Sign in to create and manage your TrackMyFix manager dashboard.
+            Create your manager account to launch your first live-tracked service job.
           </p>
+          <SignInButton mode="modal">
+            <button type="button" className="btn btn-primary" style={{ marginTop: "0.8rem", width: "100%" }}>
+              Get Started
+            </button>
+          </SignInButton>
         </section>
       </SignedOut>
 
